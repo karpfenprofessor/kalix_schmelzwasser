@@ -1,0 +1,28 @@
+# Python, local tooling, and environments
+.venv/
+.tools/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Notebook state and generated results
+.ipynb_checkpoints/
+/data/processed/*
+!/data/processed/.gitkeep
+/outputs/figures/*
+!/outputs/figures/.gitkeep
+/outputs/models/*
+!/outputs/models/.gitkeep
+
+# Local secrets and operating-system files
+.env
+.env.*
+!.env.example
+Thumbs.db
+.DS_Store

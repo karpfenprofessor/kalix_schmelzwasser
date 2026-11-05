@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kalix-schmelzwasser"
+version = "0.1.0"
+description = "Daily weather and river-flow analysis for spring snowmelt forecasting."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "matplotlib>=3.9,<4",
+    "numpy>=1.26,<3",
+    "pandas>=2.2,<4",
+    "scikit-learn>=1.5,<2",
+    "scipy>=1.14,<2",
+    "seaborn>=0.13,<1",
+    "statsmodels>=0.14,<1",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29,<8",
+    "jupyterlab>=4.2,<5",
+    "pytest>=8,<10",
+    "ruff>=0.9,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
