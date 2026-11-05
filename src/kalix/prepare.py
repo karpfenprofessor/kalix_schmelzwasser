@@ -17,7 +17,7 @@ from kalix.data import (
 )
 
 UNITS = {
-    "temperature": "degrees Celsius",
+    "nikkaluokta_temperature": "degrees Celsius",
     "precipitation": "mm",
     "discharge": "m³/s",
     "tarfala_temperature": "degrees Celsius",
@@ -274,6 +274,8 @@ def prepare_data(root: str | Path | None = None) -> dict[str, Path]:
                 )
         for filename in (*metadata["outputs"], "metadata.json"):
             (staging / filename).replace(directory / filename)
+    # Retire the former Nikkaluokta filename only after publishing the new build.
+    (directory / "temperature.parquet").unlink(missing_ok=True)
     return {filename: directory / filename for filename in (*metadata["outputs"], "metadata.json")}
 
 

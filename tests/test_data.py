@@ -6,7 +6,7 @@ import pytest
 from kalix.data import SOURCES, load_daily_data, read_station_csv
 
 
-@pytest.mark.parametrize("variable", ["temperature", "tarfala_temperature"])
+@pytest.mark.parametrize("variable", ["nikkaluokta_temperature", "tarfala_temperature"])
 def test_weather_reader_skips_station_metadata_and_keeps_quality(tmp_path, variable):
     source = tmp_path / "temperature.csv"
     source.write_text(

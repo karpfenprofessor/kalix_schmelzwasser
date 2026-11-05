@@ -32,6 +32,18 @@ Check the project's Python and installed uv-managed versions with:
 the project's `.venv` environment. If `uv` is installed on `PATH`, it can replace
 `.\.tools\uv.exe` in these commands.
 
+## Temperature comparison plot
+
+Plot both daily temperature datasets over their shared timeframe:
+
+```powershell
+.\.tools\uv.exe run python plot_temperatures.py
+```
+
+The script uses `load_processed_data()` to read `data/processed/daily.parquet`
+and saves `outputs/figures/temperature_comparison.png`. The loader checks that
+prepared data are current. Missing observations appear as gaps.
+
 ## Layout
 
 | Path | Contents |
@@ -60,7 +72,7 @@ The four exports in `resources/weather_station/` contain:
 
 **Tarfala A** (station **178970**, elevation **1,143.653 m**) has observations from
 **22 November 1995 to 31 July 2026**. All four sources are included in preparation
-and the daily loaders. Nikkaluokta uses `temperature_c`; Tarfala uses the separate
+and the daily loaders. Nikkaluokta uses `nikkaluokta_temperature_c`; Tarfala uses the separate
 `tarfala_temperature_c` column, with its own quality flags and UTC intervals.
 
 The reader handles metadata preambles and semicolon-delimited tables, preserving
@@ -75,12 +87,19 @@ Run `.\.tools\uv.exe run python -m kalix.prepare` from the project root after
 changing a source export. Preparation preserves
 the CSVs and writes these ignored files to `data/processed/`:
 
-- `temperature.parquet`, `tarfala_temperature.parquet`, `precipitation.parquet`,
-  `discharge.parquet`: individual
-  series with quality flags, available UTC intervals, and missing indicators.
+- `nikkaluokta_temperature.parquet`, `tarfala_temperature.parquet`: separate
+  temperature series named for their stations.
+- `precipitation.parquet`, `discharge.parquet`: individual precipitation and
+  discharge series.
 - `daily.parquet` and `daily.csv`: joined working data and an inspection export.
 - `metadata.json`: source metadata, units, conventions, checksums, and build details.
 - `quality_report.md`: gaps, quality counts, value checks, and monthly/annual completeness.
+
+Each station's temperature file includes its measurement (`nikkaluokta_temperature_c`
+or `tarfala_temperature_c`), quality flag, UTC intervals, and missing indicator,
+all with the same station prefix. The joined daily files use these column names too.
+Rebuilding upgrades the prepared schema to version 3 and removes the former
+`temperature.parquet` after successfully writing its replacement.
 
 The four-series overlap is **22 November 1995–30 June 2026**:
 **11,179 days**, with **10,409 (93.11%)** complete across all four measurements.
@@ -94,7 +113,7 @@ The four-series overlap is **22 November 1995–30 June 2026**:
 
 All calendar days, numeric precision, quality flags, and genuine zero precipitation
 are retained. Missing values remain missing and have separate Boolean
-`temperature_missing`, `tarfala_temperature_missing`, `precipitation_missing`,
+`nikkaluokta_temperature_missing`, `tarfala_temperature_missing`, `precipitation_missing`,
 and `discharge_missing` columns.
 No interpolation, imputation, or quality filtering is applied.
 
