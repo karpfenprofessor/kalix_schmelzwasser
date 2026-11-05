@@ -1,8 +1,9 @@
 # Kalix snowmelt and river flow
 
 Explore daily SMHI weather and discharge records to develop spring river-flow
-predictions. Feature, snow, model, and evaluation modules are placeholders; no model
-has been trained.
+predictions. An exploratory snow water equivalent (SWE) model estimates seasonal
+snow storage from the station observations. No river-flow forecast has been fitted;
+feature, forecast model, and evaluation modules remain placeholders.
 
 ## Getting started
 
@@ -44,12 +45,77 @@ The script uses `load_processed_data()` to read `data/processed/daily.parquet`
 and saves `outputs/figures/temperature_comparison.png`. The loader checks that
 prepared data are current. Missing observations appear as gaps.
 
+## Snow water equivalent chart
+
+Generate the exploratory chart and its daily data:
+
+```powershell
+.\.tools\uv.exe run python plot_snow.py
+```
+
+The script reads current prepared data and saves
+`outputs/figures/snow_water_equivalent_2024_2025.png` and
+`outputs/figures/snow_water_equivalent_2024_2025.csv`, plus a JSON file with the
+same basename recording parameters, dates, weights, and initialization checks.
+The CSV includes the central model, all nine SWE scenarios and their range, and
+river discharge for comparison. The chart covers
+**1 September 2024 to 31 August 2025**, a complete season for both temperature
+stations and precipitation.
+
+Each station temperature drives a separate snow store using the same Nikkaluokta
+precipitation. All precipitation becomes snow at or below -1 °C and rain at or
+above +1 °C; the snow fraction changes linearly between these thresholds. Melt
+starts above 0 °C and is capped by available snow, including that day's snowfall.
+Precipitation is already in mm water equivalent, so no snow-density conversion is
+needed. The model retains the observed temperatures, including winter inversions.
+
+The central estimate gives each store 50% weight and uses a degree-day melt factor
+of **3 mm/(°C day)**. The assumption range spans nine combinations: Tarfala weights
+of **0.25, 0.50, and 0.75**, each with melt factors of **2, 3, and 5 mm/(°C day)**.
+These weights are assumptions, not measured catchment elevation fractions. The
+range is neither a confidence interval nor guaranteed bounds on actual SWE.
+
+Simulation starts on **8 May 2024** for warm-up. The script checks that starting
+each store at 0 versus 1,000 mm produces the same state by the chart start for
+every selected melt factor. Storage then carries forward continuously without an
+annual reset. This sensitivity check does not establish observed snow-free ground
+or represent glacier and perennial snow storage.
+
+This is an uncalibrated two-station snow-storage proxy. Unknown catchment elevation
+weights, mountain precipitation differences, wind redistribution, and other snow
+processes limit interpretation as catchment-average SWE. Temperature and
+precipitation daily windows end at 00:00 and 06:00 UTC respectively; joining source
+date labels approximates their alignment. River discharge can provide an indirect
+timing check, but it does not directly measure SWE or uniquely determine the
+weights and melt factor. Missing forcing is rejected rather than filled with zero
+or skipped, because it can affect storage after the gap.
+
+Reusable calculations are available separately from plotting:
+
+```python
+from kalix.data import load_processed_data
+from kalix.snow import SnowParameters, simulate_snow
+
+daily = load_processed_data()
+snow = simulate_snow(
+    daily.loc["2024-05-08":"2025-08-31"],
+    parameters=SnowParameters(degree_day_factor=3),
+    high_weight=0.5,
+    initial_swe_mm=(0.0, 0.0),
+)
+```
+
+The result retains the daily index and returns `{zone}_{flux}_mm` columns. Zones
+are `nikkaluokta`, `tarfala`, and `combined`; flux names are `snowfall`, `rain`,
+`melt`, and `swe`. SWE is end-of-day storage; the other quantities are daily water
+amounts.
+
 ## Layout
 
 | Path | Contents |
 | --- | --- |
 | `resources/weather_station/` | Original SMHI CSV exports; do not edit in place |
-| `src/kalix/` | Import, preparation, and future modelling code |
+| `src/kalix/` | Import, preparation, snow calculations, and future forecast code |
 | `notebooks/` | Data quality, exploration, and model comparison |
 | `data/processed/` | Generated daily datasets, metadata, and quality report |
 | `outputs/figures/`, `outputs/models/` | Generated plots and fitted models |
