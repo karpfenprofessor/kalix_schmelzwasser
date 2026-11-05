@@ -6,7 +6,8 @@ import pytest
 from kalix.data import SOURCES, load_daily_data, read_station_csv
 
 
-def test_weather_reader_skips_station_metadata_and_keeps_quality(tmp_path):
+@pytest.mark.parametrize("variable", ["temperature", "tarfala_temperature"])
+def test_weather_reader_skips_station_metadata_and_keeps_quality(tmp_path, variable):
     source = tmp_path / "temperature.csv"
     source.write_text(
         "Stationsnamn;Stationsnummer\nNikkaluokta A;179960\n\n"
@@ -17,12 +18,13 @@ def test_weather_reader_skips_station_metadata_and_keeps_quality(tmp_path):
         "2000-01-02 00:00:01;2000-01-03 00:00:00;2000-01-02;;Y\n",
         encoding="utf-8",
     )
-    frame = read_station_csv(source, "temperature")
+    frame = read_station_csv(source, variable)
+    value = SOURCES[variable][2]
     assert len(frame) == 2
-    assert frame.iloc[0]["temperature_c"] == -8.5
-    assert frame.iloc[0]["temperature_quality"] == "Y"
-    assert pd.isna(frame.iloc[1]["temperature_c"])
-    assert str(frame["temperature_end_utc"].dt.tz) == "UTC"
+    assert frame.iloc[0][value] == -8.5
+    assert frame.iloc[0][f"{variable}_quality"] == "Y"
+    assert pd.isna(frame.iloc[1][value])
+    assert str(frame[f"{variable}_end_utc"].dt.tz) == "UTC"
     assert frame.attrs["metadata_rows"][1][0] == "Nikkaluokta A"
 
 

@@ -6,19 +6,31 @@ has been trained.
 
 ## Getting started
 
-Use Python 3.12 and [uv](https://docs.astral.sh/uv/getting-started/installation/).
-From the project root:
+The project uses Python 3.12 and [uv](https://docs.astral.sh/uv/getting-started/installation/)
+to manage Python and dependencies. In PowerShell, from the project root:
 
 ```powershell
-uv sync --locked
-uv run python -m kalix.prepare
-uv run jupyter lab
+.\.tools\uv.exe sync --locked
+.\.tools\uv.exe run python -m kalix.prepare
+.\.tools\uv.exe run jupyter lab
 ```
 
 Open `notebooks/01_data_quality.ipynb` and select the project's Python kernel.
-`uv sync` installs the package in editable mode, so notebooks also work from the
-`notebooks/` directory. For the project-local executable, replace `uv` with
-`.\.tools\uv.exe`; no environment activation is needed.
+Sync installs the package in editable mode, so notebooks also work from the
+`notebooks/` directory. No environment activation is needed.
+
+If bare `uv` is not recognized, use the project-local `.\.tools\uv.exe` above;
+its folder does not need to be on `PATH` (Windows' list of command search folders).
+Check the project's Python and installed uv-managed versions with:
+
+```powershell
+.\.tools\uv.exe run python --version
+.\.tools\uv.exe python list --only-installed
+```
+
+`python --version` checks the Python found through `PATH`, which can differ from
+the project's `.venv` environment. If `uv` is installed on `PATH`, it can replace
+`.\.tools\uv.exe` in these commands.
 
 ## Layout
 
@@ -46,18 +58,10 @@ The four exports in `resources/weather_station/` contain:
 | `smhi-opendata_kalix_durchfluss.csv` | KAALASJÄRVI discharge | m³/s |
 | `smhi-opendata_tarfala_temperatur.csv` | Tarfala A mean temperature | °C |
 
-The new **Tarfala A** export (station **178970**, elevation **1,143.653 m**) has
-observations from **22 November 1995 to 31 July 2026**. It is not yet included in
-the daily loaders or preparation pipeline, which still use the three original
-series. Read it separately with:
-
-```python
-from kalix.data import read_station_csv
-
-tarfala = read_station_csv(
-    "resources/weather_station/smhi-opendata_tarfala_temperatur.csv", "temperature"
-)
-```
+**Tarfala A** (station **178970**, elevation **1,143.653 m**) has observations from
+**22 November 1995 to 31 July 2026**. All four sources are included in preparation
+and the daily loaders. Nikkaluokta uses `temperature_c`; Tarfala uses the separate
+`tarfala_temperature_c` column, with its own quality flags and UTC intervals.
 
 The reader handles metadata preambles and semicolon-delimited tables, preserving
 quality flags, available UTC observation intervals, and source metadata in
@@ -67,29 +71,31 @@ snowfall, snow depth, or snow-water storage.
 
 ## Prepared data
 
-Run `uv run python -m kalix.prepare` after changing a pipeline source. From outside
-the checkout, add `--root "C:/path/to/kalix_schmelzwasser"`. Preparation preserves
+Run `.\.tools\uv.exe run python -m kalix.prepare` from the project root after
+changing a source export. Preparation preserves
 the CSVs and writes these ignored files to `data/processed/`:
 
-- `temperature.parquet`, `precipitation.parquet`, `discharge.parquet`: individual
+- `temperature.parquet`, `tarfala_temperature.parquet`, `precipitation.parquet`,
+  `discharge.parquet`: individual
   series with quality flags, available UTC intervals, and missing indicators.
 - `daily.parquet` and `daily.csv`: joined working data and an inspection export.
 - `metadata.json`: source metadata, units, conventions, checksums, and build details.
 - `quality_report.md`: gaps, quality counts, value checks, and monthly/annual completeness.
 
-The current three-series overlap is **1 October 1995–30 June 2026**:
-**11,231 days**, with **11,100 (98.83%)** complete across all three measurements.
-Tarfala is excluded from these figures.
+The four-series overlap is **22 November 1995–30 June 2026**:
+**11,179 days**, with **10,409 (93.11%)** complete across all four measurements.
 
 | Series | Missing days | Gaps |
 | --- | ---: | --- |
-| Nikkaluokta temperature | 101 | Eight gaps of 1–36 days |
+| Nikkaluokta temperature | 100 | Seven gaps of 3–36 days |
+| Tarfala temperature | 640 | 44 gaps of 1–128 days |
 | Nikkaluokta precipitation | 30 | June 1999 |
 | KAALASJÄRVI discharge | 0 | None |
 
 All calendar days, numeric precision, quality flags, and genuine zero precipitation
 are retained. Missing values remain missing and have separate Boolean
-`temperature_missing`, `precipitation_missing`, and `discharge_missing` columns.
+`temperature_missing`, `tarfala_temperature_missing`, `precipitation_missing`,
+and `discharge_missing` columns.
 No interpolation, imputation, or quality filtering is applied.
 
 ```python
@@ -100,7 +106,7 @@ daily = load_processed_data()
 
 The loader verifies source and output checksums and requests a rebuild if files
 are missing, stale, or invalid. Prefer it over the inspection CSV to retain types,
-UTC timestamps, and metadata. `load_daily_data()` reads the original three exports
+UTC timestamps, and metadata. `load_daily_data()` reads all four original exports
 directly. Regenerate prepared files instead of editing them.
 
 ## Modelling workflow
@@ -125,9 +131,9 @@ availability and training/validation boundaries.
 ## Checks
 
 ```powershell
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
+.\.tools\uv.exe run pytest
+.\.tools\uv.exe run ruff check .
+.\.tools\uv.exe run ruff format --check .
 ```
 
 Commit `uv.lock` and rerun checks when updating dependencies.

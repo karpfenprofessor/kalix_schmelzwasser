@@ -16,7 +16,12 @@ from kalix.data import (
     read_station_csv,
 )
 
-UNITS = {"temperature": "degrees Celsius", "precipitation": "mm", "discharge": "m³/s"}
+UNITS = {
+    "temperature": "degrees Celsius",
+    "precipitation": "mm",
+    "discharge": "m³/s",
+    "tarfala_temperature": "degrees Celsius",
+}
 ALIGNMENT = "Source daily labels; observation windows have not been synchronized."
 POLICY = (
     "All calendar days and source quality flags are retained. Missing measurements remain missing. "
@@ -163,9 +168,7 @@ def _quality_report(daily: pd.DataFrame, metadata: dict) -> str:
             [
                 "Period",
                 "Calendar days",
-                "Temperature",
-                "Precipitation",
-                "Discharge",
+                *SOURCES,
                 "All observed",
             ],
             rows,
@@ -178,8 +181,8 @@ def _quality_report(daily: pd.DataFrame, metadata: dict) -> str:
         "validated missing-data method is introduced. Do not automatically discard entire years.",
         "- Do not report a partial precipitation sum as a complete monthly or seasonal total.",
         "- Missing winter forcing can invalidate subsequent snow-storage states until a documented "
-        "reset or reconstruction. Review winter 2007/08 and springs 2013 and 2024 "
-        "in the current project exports.",
+        "reset or reconstruction. Review gaps at both temperature stations, including "
+        "Tarfala's winter 2010/11 and spring 2014 gaps.",
         "- Short bounded temperature gaps of at most three days may be evaluated later in separate "
         "estimated-value columns. Nothing is interpolated in these files.",
         "- Any later imputation must respect forecast-time availability and training boundaries; "

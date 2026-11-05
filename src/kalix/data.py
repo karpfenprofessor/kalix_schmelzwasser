@@ -8,7 +8,7 @@ from typing import Literal
 
 import pandas as pd
 
-Variable = Literal["temperature", "precipitation", "discharge"]
+Variable = Literal["temperature", "precipitation", "discharge", "tarfala_temperature"]
 
 SOURCES = {
     "temperature": ("smhi-opendata_nikkaluokta_temperatur.csv", "Lufttemperatur", "temperature_c"),
@@ -18,9 +18,14 @@ SOURCES = {
         "precipitation_mm",
     ),
     "discharge": ("smhi-opendata_kalix_durchfluss.csv", "Vattenföring (Dygn)", "discharge_m3_s"),
+    "tarfala_temperature": (
+        "smhi-opendata_tarfala_temperatur.csv",
+        "Lufttemperatur",
+        "tarfala_temperature_c",
+    ),
 }
 
-PROCESSED_SCHEMA_VERSION = 1
+PROCESSED_SCHEMA_VERSION = 2
 PREPARED_FILENAMES = (
     *(f"{variable}.parquet" for variable in SOURCES),
     "daily.parquet",

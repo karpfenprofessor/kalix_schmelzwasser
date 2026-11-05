@@ -17,6 +17,7 @@ OUTPUT_NAMES = {
     "temperature.parquet",
     "precipitation.parquet",
     "discharge.parquet",
+    "tarfala_temperature.parquet",
     "daily.parquet",
     "daily.csv",
     "metadata.json",
@@ -58,6 +59,12 @@ def source_root(tmp_path):
             (3, "1.125", "Y"),
             (4, "2.0", "G"),
             (6, "3.5", "G"),
+        ],
+        "tarfala_temperature": [
+            (2, "-12.75", "Y"),
+            (3, "-9.5", "Y"),
+            (4, "", "Y"),
+            (6, "-2.25", "Y"),
         ],
     }
     for variable, (filename, column, _) in SOURCES.items():
@@ -118,6 +125,9 @@ def test_working_copies_share_calendar_and_preserve_observations(source_root):
     assert pd.isna(daily.loc["2000-01-04", "temperature_c"])
     assert pd.isna(daily.loc["2000-01-03", "temperature_quality"])
     assert daily.loc["2000-01-06", "discharge_quality"] == "O"
+    assert daily.loc["2000-01-02", "tarfala_temperature_c"] == -12.75
+    assert daily.loc["2000-01-04", "tarfala_temperature_quality"] == "Y"
+    assert pd.isna(daily.loc["2000-01-04", "tarfala_temperature_c"])
     assert source_checksums(source_root) == raw_hashes
 
     csv = pd.read_csv(outputs["daily.csv"], index_col="date", float_precision="round_trip")
@@ -127,7 +137,7 @@ def test_working_copies_share_calendar_and_preserve_observations(source_root):
         pd.testing.assert_series_equal(
             csv[value], daily[value], check_dtype=False, check_freq=False
         )
-    for variable in ("temperature", "precipitation"):
+    for variable in ("temperature", "precipitation", "tarfala_temperature"):
         for boundary in ("start", "end"):
             column = f"{variable}_{boundary}_utc"
             pd.testing.assert_series_equal(
@@ -140,10 +150,15 @@ def test_metadata_report_and_rebuild_are_traceable(source_root):
     outputs = prepare_data(source_root)
     first = load_processed_data(source_root)
     metadata = json.loads(outputs["metadata.json"].read_text(encoding="utf-8"))
-    assert metadata["schema_version"] == 1
+    assert metadata["schema_version"] == 2
     assert pd.Timestamp(metadata["created_at_utc"]).tzinfo is not None
     assert metadata["common_range"] == {"start": "2000-01-02", "end": "2000-01-06", "rows": 5}
-    assert metadata["missing_days"] == {"temperature": 2, "precipitation": 1, "discharge": 0}
+    assert metadata["missing_days"] == {
+        "temperature": 2,
+        "precipitation": 1,
+        "discharge": 0,
+        "tarfala_temperature": 2,
+    }
     assert metadata["complete_days"] == 2
     assert set(metadata["outputs"]) == OUTPUT_NAMES - {"metadata.json"}
     for name, expected_hash in metadata["outputs"].items():
@@ -162,6 +177,10 @@ def test_metadata_report_and_rebuild_are_traceable(source_root):
         assert term in report
     assert "temperature" in report.lower()
     assert "precipitation" in report.lower()
+    assert "tarfala_temperature" in report
+    for line in report.splitlines():
+        if line.startswith("| 2000"):
+            assert len(line.split("|")) == 9  # Period, days, four series, all observed.
     assert "UTC" in report
     assert all(flag in report for flag in ("G", "Y", "O"))
 
@@ -180,6 +199,7 @@ def test_metadata_report_and_rebuild_are_traceable(source_root):
         "missing_output",
         "missing_source",
         "source",
+        "tarfala_source",
         "output",
     ],
 )
@@ -200,8 +220,9 @@ def test_loader_explains_how_to_rebuild_missing_or_stale_data(source_root, chang
         outputs["temperature.parquet"].unlink()
     elif change == "missing_source":
         (source_root / "resources" / "weather_station" / SOURCES["temperature"][0]).unlink()
-    elif change == "source":
-        path = source_root / "resources" / "weather_station" / SOURCES["temperature"][0]
+    elif change in ("source", "tarfala_source"):
+        variable = "tarfala_temperature" if change == "tarfala_source" else "temperature"
+        path = source_root / "resources" / "weather_station" / SOURCES[variable][0]
         path.write_text(path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     elif change == "output":
         outputs["daily.csv"].write_text("changed", encoding="utf-8")
@@ -275,12 +296,13 @@ def test_current_exports_match_accepted_coverage_and_missing_counts(tmp_path):
     originals = source_checksums(tmp_path)
     outputs = prepare_data(tmp_path)
     daily = load_processed_data(tmp_path)
-    calendar = pd.date_range("1995-10-01", "2026-06-30", name="date")
+    calendar = pd.date_range("1995-11-22", "2026-06-30", name="date")
     pd.testing.assert_index_equal(daily.index, calendar)
-    assert len(daily) == 11231
+    assert len(daily) == 11179
     measurements = [value for _, _, value in SOURCES.values()]
-    assert daily[measurements].isna().sum().tolist() == [101, 30, 0]
-    assert daily[measurements].notna().all(axis=1).sum() == 11100
+    assert daily[measurements].isna().sum().tolist() == [100, 30, 0, 640]
+    assert daily[measurements].notna().all(axis=1).sum() == 10409
+    assert daily.loc["1995-11-22", "tarfala_temperature_c"] == -3.6
     for variable in SOURCES:
         frame = pd.read_parquet(outputs[f"{variable}.parquet"])
         pd.testing.assert_index_equal(frame.index, calendar, check_freq=False)
