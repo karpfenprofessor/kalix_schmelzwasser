@@ -10,6 +10,7 @@ From the project root:
 
 ```powershell
 uv sync --locked
+uv run python -m kalix.prepare
 uv run jupyter lab
 ```
 
@@ -26,12 +27,13 @@ If using the project-local uv executable, replace `uv` in these commands with
 resources/weather_station/     Original SMHI exports; do not edit in place
 data/processed/                Generated, cleaned daily datasets
 notebooks/                    Data quality, exploration, and model comparison
-src/kalix/data.py             SMHI import and daily date alignment
+src/kalix/data.py             SMHI import, daily alignment, and prepared-data loading
+src/kalix/prepare.py          Reproducible common-range working copies and quality report
 src/kalix/features.py         Future predictor calculations
 src/kalix/snow.py             Future snow accumulation and melt model
 src/kalix/models.py           Future baseline and prediction models
 src/kalix/evaluation.py       Future chronological evaluation
-tests/                        Data-import checks
+tests/                        Import, preparation, and freshness checks
 outputs/figures/              Generated plots
 outputs/models/               Fitted models and associated metadata
 pyproject.toml                Package, dependencies, and check configuration
@@ -56,17 +58,67 @@ observation quality flags. Metadata are available in each source dataframe's
 `attrs`. Temperature and precipitation observation intervals are retained as UTC
 timestamps. The discharge source's date convention is retained in its metadata.
 
-`load_daily_data()` returns one row per calendar date within the overlapping date
-bounds of the three sources. Absent observations remain missing; no interpolation,
-quality filtering, or replacement with zero is performed. This is a join by source
-date labels. Temperature, precipitation, and discharge use different observation
-windows, so the daily table must not yet be treated as precisely synchronized
-forecast inputs. Check observation availability against the forecast issue time
-before building predictors.
+`load_processed_data()` loads the joined Parquet working copy, checking source and
+output checksums before use. `load_daily_data()` remains available for reading the
+original exports directly; `read_station_csv()` still reads a single source.
+Both daily loaders join by source date labels. Temperature, precipitation, and
+discharge use different observation windows, so the daily table must not yet be
+treated as precisely synchronized forecast inputs. Check observation availability
+against the forecast issue time before building predictors.
 
 All temperature records in the current export have quality flag `Y`. Investigate
 the source definitions before choosing a quality policy. The precipitation series
 does not directly measure snowfall, snow depth, or snow-water storage.
+
+## Prepared working copies
+
+Run `uv run python -m kalix.prepare` whenever the source exports change. From another
+directory, supply the checkout root with `--root "C:/path/to/kalix_schmelzwasser"`.
+Preparation preserves the original CSVs and rebuilds the following ignored outputs
+under `data/processed/`:
+
+- `temperature.parquet`, `precipitation.parquet`, and `discharge.parquet`: individual
+  measurements, source quality flags, available UTC intervals, and missing indicators.
+- `daily.parquet`: authoritative joined working data for Python.
+- `daily.csv`: a human-readable inspection export of the same daily table.
+- `metadata.json`: station/source metadata, units, date conventions, quality-code
+  explanations, checksums, processing version, and build time.
+- `quality_report.md`: every missing-data gap, quality-code counts, basic value
+  checks, and monthly/annual completeness.
+
+Every working table uses the same continuous daily calendar, bounded by the overlap
+of the three exports. With the current files this is **1 October 1995 through
+30 June 2026**, inclusive: **11,231 days**, of which **11,100 (98.83%)** have all
+three measurements.
+
+| Measurement | Missing days | Main gaps |
+| --- | ---: | --- |
+| Temperature | 101 | Eight gaps, lasting 1 to 36 days |
+| Precipitation | 30 | All of June 1999 |
+| Discharge | 0 | None |
+
+The joined data include Boolean `temperature_missing`, `precipitation_missing`, and
+`discharge_missing` columns. Missingness is separate from source quality: a value
+with a quality flag is still an observation, and unchecked recent discharge remains
+identifiable by its `O` flag. No dates are dropped, no measurements are imputed, no
+quality categories are filtered, and genuine zero precipitation is preserved.
+Numeric precision and available observation timestamps are retained.
+
+Use `from kalix.data import load_processed_data` and call
+`daily = load_processed_data()` inside the checkout. Missing, stale, or invalid
+prepared files produce a rebuild instruction. Do not edit generated files manually;
+regenerate them from the original exports. The CSV is for inspection; prefer the
+Parquet loader to retain types, UTC timestamps, and source metadata.
+
+For later models, exclude samples whose required input or target windows contain
+unresolved gaps, rather than removing an entire year automatically. Never sum an
+incomplete precipitation window as though it were complete. Missing winter weather
+can affect a calculated snow-storage state beyond the gap itself. A later experiment
+may test interpolation of bounded temperature gaps of at most three days in separate
+estimated-value columns (only four days in these exports), but this is not enabled
+in the preparation pipeline. Leave June 1999 precipitation missing: neither zero
+rainfall nor an interpolated daily series is supported by these files. Any later
+imputation must respect forecast-time availability and training/validation boundaries.
 
 ## Workflow
 

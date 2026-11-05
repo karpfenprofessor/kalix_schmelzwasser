@@ -1,6 +1,8 @@
 """Read SMHI daily exports without changing values or filtering quality flags."""
 
 import csv
+import hashlib
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -17,6 +19,20 @@ SOURCES = {
     ),
     "discharge": ("smhi-opendata_kalix_durchfluss.csv", "Vattenföring (Dygn)", "discharge_m3_s"),
 }
+
+PROCESSED_SCHEMA_VERSION = 1
+PREPARED_FILENAMES = (
+    *(f"{variable}.parquet" for variable in SOURCES),
+    "daily.parquet",
+    "daily.csv",
+    "quality_report.md",
+)
+
+
+def file_sha256(path: str | Path) -> str:
+    """Hash a source or generated file without changing it."""
+    with Path(path).open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def project_root(start: str | Path | None = None) -> Path:
@@ -72,12 +88,16 @@ def read_station_csv(path: str | Path, variable: Variable) -> pd.DataFrame:
 
     frame = pd.DataFrame(records)
     frame["date"] = pd.to_datetime(frame["date"], format="%Y-%m-%d", errors="raise")
+    if frame["date"].isna().any():
+        raise ValueError(f"Missing observation dates found in {path}.")
     frame[value_column] = pd.to_numeric(frame[value_column], errors="raise")
     if frame[value_column].isin([float("inf"), float("-inf")]).any():
         raise ValueError(f"Non-finite measurements found in {path}.")
     for name in selected:
         if name.endswith("_utc"):
             frame[name] = pd.to_datetime(frame[name], utc=True, errors="raise")
+            if frame[name].isna().any():
+                raise ValueError(f"Missing observation timestamps found in {path}.")
     if frame["date"].duplicated().any():
         raise ValueError(f"Duplicate observation dates found in {path}.")
     frame = frame.set_index("date").sort_index()
@@ -85,6 +105,12 @@ def read_station_csv(path: str | Path, variable: Variable) -> pd.DataFrame:
         "source_file": path.name,
         "source_date_column": date_column,
         "metadata_rows": rows[:header_number],
+        "source_notes": [
+            field.strip()
+            for row in rows[header_number + 1 :]
+            for field in row[header.index("Kvalitet") + 1 :]
+            if field.strip()
+        ],
     }
     return frame
 
@@ -107,3 +133,31 @@ def load_daily_data(root: str | Path | None = None) -> pd.DataFrame:
         "alignment": "Source daily labels; observation windows have not been synchronized.",
     }
     return combined
+
+
+def load_processed_data(root: str | Path | None = None) -> pd.DataFrame:
+    """Load prepared daily data after checking source and output fingerprints.
+
+    Preparation is explicit: missing, stale, or damaged outputs never trigger an
+    implicit rebuild. Source import functions remain available independently.
+    """
+    root = project_root(root)
+    directory = root / "data" / "processed"
+    rebuild = f'Rebuild with: uv run python -m kalix.prepare --root "{root}"'
+    try:
+        metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+        if metadata["schema_version"] != PROCESSED_SCHEMA_VERSION:
+            raise ValueError("Prepared-data schema version has changed.")
+        for variable, (filename, _, _) in SOURCES.items():
+            source = root / "resources" / "weather_station" / filename
+            if file_sha256(source) != metadata["sources"][variable]["sha256"]:
+                raise ValueError(f"Source has changed: {filename}.")
+        for filename in PREPARED_FILENAMES:
+            if file_sha256(directory / filename) != metadata["outputs"][filename]:
+                raise ValueError(f"Prepared output has changed: {filename}.")
+        daily = pd.read_parquet(directory / "daily.parquet", engine="pyarrow")
+        # Parquet retains dates but not pandas' daily frequency annotation.
+        daily.index = pd.DatetimeIndex(daily.index, freq="D")
+        return daily
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ValueError(f"Prepared data are missing, stale, or invalid. {rebuild}") from error
