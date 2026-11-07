@@ -52,6 +52,7 @@ def _gap_intervals(series: pd.Series) -> list[dict]:
 
 def _markdown_table(headers: list[str], rows: list[list]) -> list[str]:
     """Return text lines forming a Markdown table for the quality report."""
+
     def line(values):
         # Escape pipes in cell contents so they do not create extra columns.
         return "| " + " | ".join(str(value).replace("|", "\\|") for value in values) + " |"

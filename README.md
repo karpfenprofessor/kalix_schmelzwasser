@@ -194,6 +194,74 @@ are missing, stale, or invalid. Prefer it over the inspection CSV to retain type
 UTC timestamps, and metadata. `load_daily_data()` reads all four original exports
 directly. Regenerate prepared files instead of editing them.
 
+## Experimental temperature cleanup
+
+Generate separate candidate datasets and a missing-data experiment report:
+
+```powershell
+python -m kalix.cleanup
+```
+
+Use the project's Python environment (for example, `.venv\Scripts\python.exe`),
+or run `uv run python -m kalix.cleanup`. The command also accepts `--root`.
+It validates the prepared inputs and writes five daily Parquet files to
+`data/cleaned/`: `daily.parquet` and the four station/variable files using the
+same names as `data/processed/`. It also writes `validation.parquet`,
+`quality_report.md`, and a checksum/provenance manifest in `metadata.json`.
+Generated cleaned outputs are ignored by Git.
+
+All original columns, observations, source quality codes, missing flags, UTC
+intervals, and dates remain intact. Each temperature station gains three columns:
+
+- `<station>_temperature_candidate_c`: observed temperature where available,
+  an experimental regression estimate where possible, otherwise missing.
+- `<station>_temperature_imputed`: true only for an estimated missing observation.
+- `<station>_temperature_imputation_method`: `observed`,
+  `cross_station_regression`, or `unresolved`.
+
+Each station has its own seasonal linear regression using the other station's
+observed daily temperature, annual sine/cosine terms, and their interactions.
+Models for a calendar year use only earlier years and require at least 730 paired
+observations. Estimated readings never supply training pairs or donor values.
+Precipitation and discharge are not filled; June 1999 precipitation stays missing.
+
+```python
+from kalix.cleanup import load_cleaned_data
+
+cleaned = load_cleaned_data()
+```
+
+The loader checks prepared-input provenance and every cleaned output checksum.
+Regenerate outputs instead of editing Parquet files. Estimates are separate
+columns; existing plots and snow calculations continue using observations.
+
+Open `notebooks/check_cleaned.ipynb` to compare both temperature curves and inspect
+inserted values in a different colour. It includes six example gaps, a complete
+gap inventory, and a selectable detailed chart and daily table. By default,
+each zoom includes seven observed readings before and after the gap.
+
+Validation hides fully observed blocks of 1, 3, 7, 14, 30, 62, and 128 days in
+later years. It compares regression with earlier-year monthly climatology and,
+for gaps up to three days, bounded interpolation. Interpolation is a benchmark
+only: both endpoints must be available before issuing a forecast. The validation
+table records every station/year/length/starting-quarter/method case, its status,
+skip reason, temperature error, and snow sensitivity when sufficient complete
+weather exists. Blocks may overlap; the scores are descriptive.
+
+SWE sensitivity uses identical zero initialization 180 days before each block,
+default snow parameters, equal station weights, and a 90-day follow-up. It
+compares candidate forcing against observed forcing, not measured SWE. Missing
+forcing can affect storage after the gap; do not restart SWE at zero without a
+documented initialization or reconstruction.
+
+Candidates remain experimental even when scores look good. Donor observations
+must have been available at forecast issuance; archived interval timestamps do
+not prove publication latency or absence of later revisions. Annually refitted
+candidates fit rolling yearly evaluation, but fixed multi-year holdouts require
+refitting and freezing preprocessing at their own training cutoff. Define the
+forecast target and issue date before comparing forecast performance on common
+evaluation dates, with coverage reported separately.
+
 ## Modelling workflow
 
 1. Inspect coverage, gaps, quality flags, and observation intervals.
