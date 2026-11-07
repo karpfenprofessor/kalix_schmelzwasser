@@ -110,6 +110,118 @@ are `nikkaluokta`, `tarfala`, and `combined`; flux names are `snowfall`, `rain`,
 `melt`, and `swe`. SWE is end-of-day storage; the other quantities are daily water
 amounts.
 
+## Three-layer snow storage from cleaned data
+
+Set `START_DATE` and `END_DATE` near the top of `src/plot/plot_snow.py`
+(both inclusive, in `YYYY-MM-DD` format), then generate the PNG chart:
+
+```powershell
+.venv\Scripts\python.exe src/plot/plot_snow.py
+```
+
+The chart labels time by month and year and shows four lines: Nikkaluokta,
+middle, Tarfala, and the **sum of the three stores**. The sum adds their SWE depths;
+the equal-area average is this sum divided by three. Storage is simulated over the
+full cleaned record before selecting the dates. The output filename includes the
+selected dates, for example
+`outputs/figures/snow_water_equivalent_2024-09-01_2025-08-31.png`.
+
+For the same four snow-storage lines with observed discharge on a separate
+right-hand axis, edit `START_DATE` and `END_DATE` in
+`src/plot/plot_snow_discharge.py` and run:
+
+```powershell
+.venv\Scripts\python.exe src/plot/plot_snow_discharge.py
+```
+
+Snow storage uses mm water equivalent on the left axis; the orange discharge
+line uses m³/s on the right. Discharge is aligned to the same daily dates,
+without smoothing or normalization. Missing, nonfinite, or negative discharge
+within the selected interval is rejected; observed zero values are retained.
+The output is `outputs/figures/snow_discharge_<start>_<end>.png`.
+
+Open `notebooks/check_snow.ipynb` and run all cells to calculate the full daily
+record, **22 November 1995 to 30 June 2026**. Edit `VIEW_START`, `VIEW_END`,
+`TABLE_START`, and `TABLE_DAYS` to inspect a selected interval without restarting
+the simulation. The notebook includes temperature and SWE charts, initialization
+sensitivity, a daily table, and a detailed view of the June 1999 assumption.
+
+The model represents three equal-area layers:
+
+| Layer | Elevation | Daily temperature | Area weight |
+| --- | --- | --- | --- |
+| Nikkaluokta | 466.765 m | Cleaned Nikkaluokta candidate | 1/3 |
+| Middle | 805.209 m | `(Nikkaluokta + Tarfala) / 2` | 1/3 |
+| Tarfala | 1,143.653 m | Cleaned Tarfala candidate | 1/3 |
+
+The middle temperature assumes a linear profile between station elevations each
+day, including inversions. Candidate temperatures preserve observations and fill
+their gaps with the existing experimental estimates. Each layer receives the
+**full precipitation depth**; it is not divided by three. Simulate each layer
+independently before averaging their fluxes and stores.
+
+For each layer and day, the existing snow parameters give:
+
+```text
+snow_fraction = clip((1 - temperature_c) / 2, 0, 1)
+snowfall_mm = precipitation_used_mm * snow_fraction
+rain_mm = precipitation_used_mm - snowfall_mm
+potential_melt_mm = 3 * max(temperature_c, 0)
+melt_mm = min(previous_swe_mm + snowfall_mm, potential_melt_mm)
+swe_mm = previous_swe_mm + snowfall_mm - melt_mm
+combined_swe_mm = (nikkaluokta_swe_mm + middle_swe_mm + tarfala_swe_mm) / 3
+```
+
+All snow falls at or below -1 °C, all rain at or above +1 °C, and melt begins above
+0 °C. Storage carries forward without annual resets. SWE is **mm water equivalent**,
+not physical snow depth or total water volume. Equal areas, uniform precipitation,
+and the melt parameters are modelling assumptions, not calibrated catchment facts.
+
+```python
+from kalix.cleanup import load_cleaned_data
+from kalix.snow import analyze_cleaned_snow
+
+cleaned = load_cleaned_data()
+snow = analyze_cleaned_snow(cleaned)
+```
+
+The analysis uses both `*_temperature_candidate_c` columns and retains their
+`*_temperature_imputed` flags. It assumes **zero precipitation only where readings
+are missing in June 1999**, without editing cleaned files. `precipitation_mm`
+retains the original missing values; `precipitation_used_mm` records model forcing;
+`precipitation_assumed_zero` flags substitutions. Unexpected missing forcing,
+nonfinite values, and negative precipitation are rejected. Missing June rainfall
+can affect storage after the month ends.
+
+Each layer starts at zero before the first day. A comparison run starts each at
+1,000 mm under identical weather. `initialization_max_difference_mm` reports the
+largest absolute layer SWE difference each day; `initialization_converged` is true
+when all three differences are at most `1e-8` mm. The first convergence date is
+recorded in `snow.attrs["initialization"]`, or `None` if no convergence occurs.
+This comparison does not establish actual snow-free ground or resolve uncertainty
+from the assumed precipitation. Other assumptions and the simulated period are
+also recorded in dataframe metadata.
+
+For custom forcing or initial storage, use the strict calculation interface:
+
+```python
+from kalix.snow import SnowParameters, simulate_three_layer_snow
+
+# forcing has the original two station temperature column names and precipitation_mm.
+snow = simulate_three_layer_snow(
+    forcing,
+    parameters=SnowParameters(degree_day_factor=3),
+    initial_swe_mm=(0.0, 0.0, 0.0),  # Nikkaluokta, middle, Tarfala
+)
+```
+
+This function returns three `{layer}_temperature_c` columns and
+`{zone}_{flux}_mm` for `nikkaluokta`, `middle`, `tarfala`, and `combined`, with
+fluxes `snowfall`, `rain`, `melt`, and `swe`. It requires complete daily forcing
+and makes no missing-precipitation substitutions. Both interfaces preserve their
+inputs. The original two-station `simulate_snow()` API and its cleanup-validation
+benchmarks remain available with their existing behaviour.
+
 ## Layout
 
 | Path | Contents |
