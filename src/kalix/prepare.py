@@ -1,4 +1,9 @@
-"""Build common-range working copies without filling or discarding observations."""
+"""Turn the original CSV exports into consistent daily working datasets.
+
+Run with ``python -m kalix.prepare`` from the project checkout. This module
+uses kalix.data to read observations, writes Parquet/CSV tables, and creates
+a human-readable quality report plus JSON metadata. It does not fill gaps.
+"""
 
 import argparse
 import json
@@ -30,7 +35,14 @@ POLICY = (
 
 
 def _gap_intervals(series: pd.Series) -> list[dict]:
+    """Describe each consecutive run of missing values in one measurement column.
+
+    A Series is a single pandas column. The leading underscore in this function's
+    name indicates an internal helper, rather than a public entry point.
+    """
     missing = series.isna()
+    # shift compares each flag with yesterday's flag; ne means "not equal".
+    # cumsum increases the group number whenever a missing/nonmissing run changes.
     groups = missing.ne(missing.shift()).cumsum()
     return [
         {"start": str(gap.index[0].date()), "end": str(gap.index[-1].date()), "days": len(gap)}
@@ -39,13 +51,16 @@ def _gap_intervals(series: pd.Series) -> list[dict]:
 
 
 def _markdown_table(headers: list[str], rows: list[list]) -> list[str]:
+    """Return text lines forming a Markdown table for the quality report."""
     def line(values):
+        # Escape pipes in cell contents so they do not create extra columns.
         return "| " + " | ".join(str(value).replace("|", "\\|") for value in values) + " |"
 
     return [line(headers), line(["---"] * len(headers)), *(line(row) for row in rows), ""]
 
 
 def _quality_report(daily: pd.DataFrame, metadata: dict) -> str:
+    """Summarize coverage, gaps, quality codes, and completeness as Markdown."""
     measurements = [value for _, _, value in SOURCES.values()]
     total = len(daily)
     common = metadata["common_range"]
@@ -68,6 +83,8 @@ def _quality_report(daily: pd.DataFrame, metadata: dict) -> str:
     for variable, (_, _, value) in SOURCES.items():
         source = metadata["sources"][variable]
         series = daily[value]
+        # Conditional expressions choose a fallback for entirely missing columns.
+        # The f-string format .15g displays up to 15 significant digits.
         minimum = "n/a" if series.dropna().empty else f"{series.min():.15g}"
         maximum = "n/a" if series.dropna().empty else f"{series.max():.15g}"
         rows.append(
@@ -117,6 +134,7 @@ def _quality_report(daily: pd.DataFrame, metadata: dict) -> str:
     lines += ["## Quality codes in the common range", ""]
     quality_rows = []
     for variable in SOURCES:
+        # Count each flag, including missing flags (dropna=False).
         counts = daily[f"{variable}_quality"].value_counts(dropna=False)
         for code, count in counts.items():
             label = "missing" if pd.isna(code) else (code if code else "blank source flag")
@@ -138,6 +156,7 @@ def _quality_report(daily: pd.DataFrame, metadata: dict) -> str:
         if variable != "discharge":
             observed = daily.loc[daily[value].notna()]
             if not observed.empty:
+                # iloc selects by integer position; loc selects by row label.
                 first = observed.iloc[0]
                 lines += [
                     f"Example daily label: {observed.index[0].date()}; UTC observation interval: "
@@ -147,6 +166,7 @@ def _quality_report(daily: pd.DataFrame, metadata: dict) -> str:
                 ]
         lines.extend(f"- {note}" for note in source["source_notes"])
         lines.append("")
+    # Boolean tables make counting convenient: True counts as 1, False as 0.
     observed = daily[measurements].notna()
     for title, labels in (
         ("Annual completeness", daily.index.strftime("%Y")),
@@ -154,6 +174,7 @@ def _quality_report(daily: pd.DataFrame, metadata: dict) -> str:
     ):
         lines += [f"## {title}", "", "Denominators include only days in the common range.", ""]
         rows = []
+        # Group rows with the same year/month label before counting observations.
         for label, group in observed.groupby(labels, sort=True):
             counts = group.sum()
             rows.append(
@@ -189,6 +210,7 @@ def _quality_report(daily: pd.DataFrame, metadata: dict) -> str:
         "future observations must not enter predictors before they would have been available.",
         "",
     ]
+    # Join individual report lines into a single string with newline separators.
     return "\n".join(lines)
 
 
@@ -201,6 +223,7 @@ def prepare_data(root: str | Path | None = None) -> dict[str, Path]:
     """
     root = project_root(root)
     source_directory = root / "resources" / "weather_station"
+    # Dictionary comprehensions build one named entry per source dataset.
     source_hashes = {
         variable: file_sha256(source_directory / filename)
         for variable, (filename, _, _) in SOURCES.items()
@@ -209,6 +232,7 @@ def prepare_data(root: str | Path | None = None) -> dict[str, Path]:
         variable: read_station_csv(source_directory / filename, variable)
         for variable, (filename, _, _) in SOURCES.items()
     }
+    # Restrict all datasets to their overlap, keeping every date within it.
     start = max(frame.index.min() for frame in frames.values())
     end = min(frame.index.max() for frame in frames.values())
     if start > end:
@@ -218,19 +242,23 @@ def prepare_data(root: str | Path | None = None) -> dict[str, Path]:
     trimmed = {}
     for variable, frame in frames.items():
         sources[variable] = {
+            # ** copies the original metadata entries into this new dictionary.
             **frame.attrs,
             "sha256": source_hashes[variable],
             "units": UNITS[variable],
             "source_start": str(frame.index.min().date()),
             "source_end": str(frame.index.max().date()),
         }
+        # reindex exposes absent dates as missing rows; copy gives us our own table.
         table = frame.reindex(calendar).copy()
         value = SOURCES[variable][2]
+        # Explicit types keep saved files consistent even for all-missing columns.
         table[value] = table[value].astype("float64")
         table[f"{variable}_quality"] = table[f"{variable}_quality"].astype("string")
         table[f"{variable}_missing"] = table[value].isna()
         table.attrs = sources[variable]
         trimmed[variable] = table
+    # axis=1 puts the station columns side by side, aligned by their date index.
     daily = pd.concat(trimmed.values(), axis=1)
     daily.attrs = {"sources": list(sources.values()), "alignment": ALIGNMENT, "policy": POLICY}
     measurements = [value for _, _, value in SOURCES.values()]
@@ -244,18 +272,21 @@ def prepare_data(root: str | Path | None = None) -> dict[str, Path]:
         "missing_days": {
             variable: int(daily[value].isna().sum()) for variable, (_, _, value) in SOURCES.items()
         },
+        # all(axis=1) asks whether every measurement is present in each row.
         "complete_days": int(daily[measurements].notna().all(axis=1).sum()),
         "outputs": {},
     }
     report = _quality_report(daily, metadata)
     directory = root / "data" / "processed"
     directory.mkdir(parents=True, exist_ok=True)
+    # Work in a temporary folder first; leaving the with block cleans it up.
     with TemporaryDirectory(prefix=".prepare-", dir=directory) as temporary:
         staging = Path(temporary)
         for variable, frame in trimmed.items():
             frame.to_parquet(
                 staging / f"{variable}.parquet", engine="pyarrow", compression="snappy"
             )
+        # Parquet preserves table types and compresses well; CSV is easy to inspect.
         daily.to_parquet(staging / "daily.parquet", engine="pyarrow", compression="snappy")
         daily.to_csv(
             staging / "daily.csv", index_label="date", encoding="utf-8", lineterminator="\n"
@@ -267,11 +298,13 @@ def prepare_data(root: str | Path | None = None) -> dict[str, Path]:
             encoding="utf-8",
             newline="\n",
         )
+        # Detect a source being edited while we were preparing its working copy.
         for variable, (filename, _, _) in SOURCES.items():
             if file_sha256(source_directory / filename) != source_hashes[variable]:
                 raise ValueError(
                     f"Source changed during preparation: {filename}. Run preparation again."
                 )
+        # Publish metadata last. Until then, freshness checks reject a mixed build.
         for filename in (*metadata["outputs"], "metadata.json"):
             (staging / filename).replace(directory / filename)
     # Retire the former Nikkaluokta filename only after publishing the new build.
@@ -280,6 +313,9 @@ def prepare_data(root: str | Path | None = None) -> dict[str, Path]:
 
 
 def main() -> None:
+    """Read command-line options, prepare data, and print a short build summary."""
+    # argparse turns options such as --root into Python values; __doc__ is the
+    # module docstring above and also becomes the command's help description.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root", type=Path, help="Project root (otherwise found from the current directory)."
@@ -300,4 +336,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Run the command only when executed directly or with -m, not when imported.
     main()

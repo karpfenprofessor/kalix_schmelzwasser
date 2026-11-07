@@ -1,4 +1,9 @@
-"""Read SMHI daily exports without changing values or filtering quality flags."""
+"""Read SMHI weather and river-flow observations into pandas tables.
+
+Use load_daily_data() for the original CSVs, or load_processed_data() for files
+built by kalix.prepare. A DataFrame is a table with named columns; here its
+index (row labels) contains dates. Missing values and quality flags are kept.
+"""
 
 import csv
 import hashlib
@@ -8,8 +13,11 @@ from typing import Literal
 
 import pandas as pd
 
+# Literal documents the accepted names for editors/type checkers; it does not
+# check values at runtime. The | syntax in annotations below means "or".
 Variable = Literal["nikkaluokta_temperature", "precipitation", "discharge", "tarfala_temperature"]
 
+# Each dictionary value is a tuple: filename, original column, working column.
 SOURCES = {
     "nikkaluokta_temperature": (
         "smhi-opendata_nikkaluokta_temperatur.csv",
@@ -40,6 +48,8 @@ PREPARED_FILENAMES = (
 
 def file_sha256(path: str | Path) -> str:
     """Hash a source or generated file without changing it."""
+    # "rb" reads raw bytes. The with block closes the file even if reading fails.
+    # A checksum changes when file contents change; it is not encryption.
     with Path(path).open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
@@ -49,6 +59,7 @@ def project_root(start: str | Path | None = None) -> Path:
     location = Path.cwd() if start is None else Path(start).resolve()
     if location.is_file():
         location = location.parent
+    # * expands the parent directories, so we search this folder and then upward.
     for candidate in (location, *location.parents):
         if (candidate / "pyproject.toml").is_file() and (
             candidate / "resources" / "weather_station"
@@ -64,18 +75,24 @@ def read_station_csv(path: str | Path, variable: Variable) -> pd.DataFrame:
     labels raise errors. Source preamble lines are retained as dataframe metadata.
     """
     path = Path(path)
+    # Unpack the tuple; _ marks a value we do not need in this function.
     _, source_column, value_column = SOURCES[variable]
+    # utf-8-sig also handles a leading byte-order mark in exported CSV files.
     with path.open(encoding="utf-8-sig", newline="") as source:
         rows = list(csv.reader(source, delimiter=";"))
 
+    # enumerate supplies both the row number and row contents. SMHI puts metadata
+    # before the actual table, so we search rather than assume the first row.
     for header_number, header in enumerate(rows):
         is_daily = "Representativt dygn" in header or (header and header[0].startswith("Datum ("))
         if is_daily and source_column in header and "Kvalitet" in header:
             break
     else:
+        # A for/else block runs its else only when no break was reached.
         raise ValueError(f"No daily {variable} observation header found in {path}.")
 
     date_column = "Representativt dygn" if variable != "discharge" else header[0]
+    # Map our column names to their positions in the source CSV header.
     selected = {
         "date": header.index(date_column),
         value_column: header.index(source_column),
@@ -91,11 +108,14 @@ def read_station_csv(path: str | Path, variable: Variable) -> pd.DataFrame:
             continue
         if len(row) <= max(selected.values()):
             raise ValueError(f"Incomplete observation at {path}:{line_number}.")
+        # This dictionary comprehension selects and renames fields in one row.
         records.append({name: row[index].strip() for name, index in selected.items()})
     if not records:
         raise ValueError(f"No daily observations found in {path}.")
 
+    # A list of dictionaries becomes a table: one dictionary per observation.
     frame = pd.DataFrame(records)
+    # errors="raise" stops on invalid input instead of silently replacing it.
     frame["date"] = pd.to_datetime(frame["date"], format="%Y-%m-%d", errors="raise")
     if frame["date"].isna().any():
         raise ValueError(f"Missing observation dates found in {path}.")
@@ -109,7 +129,9 @@ def read_station_csv(path: str | Path, variable: Variable) -> pd.DataFrame:
                 raise ValueError(f"Missing observation timestamps found in {path}.")
     if frame["date"].duplicated().any():
         raise ValueError(f"Duplicate observation dates found in {path}.")
+    # Dates become row labels, allowing later selections such as .loc["2024"].
     frame = frame.set_index("date").sort_index()
+    # attrs holds descriptive metadata separately from measurement columns.
     frame.attrs = {
         "source_file": path.name,
         "source_date_column": date_column,
@@ -131,11 +153,14 @@ def load_daily_data(root: str | Path | None = None) -> pd.DataFrame:
         read_station_csv(source_directory / filename, variable)
         for variable, (filename, _, _) in SOURCES.items()
     ]
+    # Latest starting date and earliest ending date define the shared period.
     start = max(frame.index.min() for frame in frames)
     end = min(frame.index.max() for frame in frames)
     if start > end:
         raise ValueError("The source observation periods do not overlap.")
     calendar = pd.date_range(start, end, freq="D", name="date")
+    # axis=1 joins columns by date. reindex inserts missing calendar days as NaN
+    # (pandas' missing numeric value), rather than compressing time across gaps.
     combined = pd.concat(frames, axis=1, sort=True).reindex(calendar)
     combined.attrs = {
         "sources": [frame.attrs for frame in frames],
@@ -153,6 +178,7 @@ def load_processed_data(root: str | Path | None = None) -> pd.DataFrame:
     root = project_root(root)
     directory = root / "data" / "processed"
     rebuild = f'Rebuild with: uv run python -m kalix.prepare --root "{root}"'
+    # Check both the input sources and generated outputs before trusting them.
     try:
         metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
         if metadata["schema_version"] != PROCESSED_SCHEMA_VERSION:
@@ -169,4 +195,5 @@ def load_processed_data(root: str | Path | None = None) -> pd.DataFrame:
         daily.index = pd.DatetimeIndex(daily.index, freq="D")
         return daily
     except (OSError, ValueError, KeyError, TypeError) as error:
+        # "from error" preserves the original cause for debugging a traceback.
         raise ValueError(f"Prepared data are missing, stale, or invalid. {rebuild}") from error
